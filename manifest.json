@@ -1,7 +1,7 @@
 {
-  "name": "1xBet",
-  "short_name": "1xBet",
-  "description": "1xBet",
+  "name": "Megapari",
+  "short_name": "Megapari",
+  "description": "Megapari",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
