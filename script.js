@@ -8,6 +8,7 @@ const MAX_VIDEO_DURATION_SECONDS = 60 * 60 * 4; // 4 ساعات
 const LARGE_VIDEO_THRESHOLD = 100 * 1024 * 1024; // 100 MB
 
 const player = document.getElementById("player");
+const screen = document.getElementById("screen");
 const controls = document.getElementById("controls");
 const addBtn = document.getElementById("addBtn");
 const deleteBtn = document.getElementById("deleteBtn");
@@ -17,6 +18,7 @@ let isLoadingVideo = false;
 let currentBlobUrl = null;
 let lastSelectedFile = null;
 let lastSavedPlaybackTime = -1;
+let lastTapTime = 0;
 
 player.preload = "auto";
 player.controls = false;
@@ -101,6 +103,28 @@ function showStatus(message, isError = false) {
     label.textContent = oldText;
     controls.classList.add("hidden");
   }, isError ? 4000 : 2500);
+}
+
+function showAddButton() {
+  controls.classList.remove("hidden");
+  clearTimeout(hideTimer);
+  if (player.classList.contains("active")) {
+    hideTimer = setTimeout(hideAddButton, 4000);
+  }
+}
+
+function hideAddButton() {
+  controls.classList.add("hidden");
+}
+
+function handleDoubleTapShowControls() {
+  const now = Date.now();
+  const isDoubleTap = now - lastTapTime < 300;
+  lastTapTime = now;
+
+  if (isDoubleTap) {
+    showAddButton();
+  }
 }
 
 function openDB() {
@@ -269,18 +293,6 @@ function playBlob(blob) {
   }
 }
 
-function showAddButton() {
-  controls.classList.remove("hidden");
-  clearTimeout(hideTimer);
-  if (player.classList.contains("active")) {
-    hideTimer = setTimeout(hideAddButton, 3000);
-  }
-}
-
-function hideAddButton() {
-  controls.classList.add("hidden");
-}
-
 function setBusyState(isBusy) {
   addBtn.style.opacity = isBusy ? "0.5" : "1";
   addBtn.disabled = isBusy;
@@ -369,15 +381,17 @@ player.addEventListener("error", (e) => {
   showAddButton();
 });
 
-player.addEventListener("click", (event) => {
+screen.addEventListener("dblclick", (event) => {
   event.preventDefault();
   event.stopPropagation();
+  showAddButton();
 });
 
-player.addEventListener("dblclick", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-});
+screen.addEventListener("touchstart", (event) => {
+  if (event.touches && event.touches.length > 0) {
+    handleDoubleTapShowControls();
+  }
+}, { passive: true });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
