@@ -71,6 +71,20 @@ function restorePlaybackPosition() {
   const safeTime = Math.min(savedTime, Math.max(player.duration - 0.5, 0));
   if (safeTime > 0 && Math.abs(player.currentTime - safeTime) > 0.5) {
     player.currentTime = safeTime;
+    lastSavedPlaybackTime = safeTime;
+  }
+}
+
+function resumePlaybackIfVisible() {
+  if (!player || !player.src || document.hidden) return;
+  const savedTime = getSavedPlaybackPosition();
+  if (!savedTime || savedTime <= 0) return;
+
+  if (player.readyState >= 1 || player.duration > 0) {
+    restorePlaybackPosition();
+    if (player.paused) {
+      player.play().catch(() => {});
+    }
   }
 }
 
@@ -250,16 +264,6 @@ function evaluateVideoFile(file) {
   return { valid: true, reason: "تم تجهيز الفيديو بنجاح.", large: false };
 }
 
-function applyResumeTime() {
-  const savedTime = getSavedPlaybackPosition();
-  if (!savedTime || !Number.isFinite(player.duration) || player.duration <= 0) return;
-
-  const safeTime = Math.min(savedTime, Math.max(player.duration - 0.5, 0));
-  if (safeTime > 0 && Math.abs(player.currentTime - safeTime) > 0.5) {
-    player.currentTime = safeTime;
-  }
-}
-
 function playBlob(blob) {
   try {
     cleanupObjectURL();
@@ -275,8 +279,10 @@ function playBlob(blob) {
     player.muted = false;
 
     const resumeOnReady = () => {
-      applyResumeTime();
-      if (player.paused) {
+      if (getSavedPlaybackPosition() > 0) {
+        restorePlaybackPosition();
+      }
+      if (player.paused && !document.hidden) {
         player.play().catch(() => {});
       }
     };
@@ -367,12 +373,14 @@ player.addEventListener("loadedmetadata", () => {
   if (Number.isFinite(duration) && duration > MAX_VIDEO_DURATION_SECONDS) {
     showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
   }
-
-  applyResumeTime();
+  restorePlaybackPosition();
 });
 
 player.addEventListener("canplay", () => {
-  applyResumeTime();
+  restorePlaybackPosition();
+  if (!document.hidden && player.paused) {
+    player.play().catch(() => {});
+  }
 });
 
 player.addEventListener("timeupdate", savePlaybackPosition);
@@ -405,6 +413,19 @@ screen.addEventListener("touchstart", (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     savePlaybackPosition();
+    return;
+  }
+
+  if (document.visibilityState === "visible") {
+    setTimeout(() => {
+      if (!player || !player.src) return;
+      if (getSavedPlaybackPosition() > 0) {
+        restorePlaybackPosition();
+      }
+      if (player.paused) {
+        player.play().catch(() => {});
+      }
+    }, 250);
   }
 });
 
