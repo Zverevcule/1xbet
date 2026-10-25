@@ -2,6 +2,7 @@ const DB_NAME = "videoAppDB";
 const STORE_NAME = "videos";
 const VIDEO_KEY = "currentVideo";
 const METADATA_KEY = "videoMetadata";
+const VIDEO_POSITION_KEY = "videoCurrentPosition";
 const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB
 const MAX_VIDEO_DURATION_SECONDS = 60 * 60 * 4; // 4 ساعات
 const LARGE_VIDEO_THRESHOLD = 100 * 1024 * 1024; // 100 MB
@@ -15,13 +16,58 @@ let hideTimer = null;
 let isLoadingVideo = false;
 let currentBlobUrl = null;
 let lastSelectedFile = null;
+let lastSavedPlaybackTime = -1;
 
 player.preload = "auto";
-player.controls = true;
+player.controls = false;
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 MB";
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getSavedPlaybackPosition() {
+  try {
+    const value = Number.parseFloat(localStorage.getItem(VIDEO_POSITION_KEY) || "0");
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
+function savePlaybackPosition() {
+  if (!player || !player.src) return;
+
+  const time = Number(player.currentTime);
+  if (!Number.isFinite(time) || time <= 0) return;
+  if (Math.abs(time - lastSavedPlaybackTime) < 1) return;
+
+  lastSavedPlaybackTime = time;
+
+  try {
+    localStorage.setItem(VIDEO_POSITION_KEY, String(time));
+  } catch (err) {
+    console.warn("تعذر حفظ موضع التشغيل:", err);
+  }
+}
+
+function clearPlaybackPosition() {
+  try {
+    localStorage.removeItem(VIDEO_POSITION_KEY);
+  } catch (err) {
+    console.warn("تعذر حذف موضع التشغيل:", err);
+  }
+  lastSavedPlaybackTime = -1;
+}
+
+function restorePlaybackPosition() {
+  const savedTime = getSavedPlaybackPosition();
+  if (!savedTime || !Number.isFinite(player.duration) || player.duration <= 0) return;
+
+  const safeTime = Math.min(savedTime, player.duration - 0.5);
+  if (safeTime > 0) {
+    player.currentTime = safeTime;
+  }
 }
 
 function isValidVideoFile(file) {
@@ -189,7 +235,25 @@ function playBlob(blob) {
     player.classList.add("active");
     player.loop = false;
     player.preload = "auto";
-    player.controls = true;
+    player.controls = false;
+
+    const savedTime = getSavedPlaybackPosition();
+    if (savedTime > 0) {
+      player.dataset.resumeAt = String(savedTime);
+    }
+
+    const onMetadataReady = () => {
+      const resumeAt = Number.parseFloat(player.dataset.resumeAt || "0");
+      if (resumeAt > 0 && Number.isFinite(player.duration) && player.duration > 0) {
+        const safeTime = Math.min(resumeAt, player.duration - 0.5);
+        if (safeTime > 0) {
+          player.currentTime = safeTime;
+        }
+      }
+      delete player.dataset.resumeAt;
+    };
+
+    player.addEventListener("loadedmetadata", onMetadataReady, { once: true });
 
     const playPromise = player.play();
     if (playPromise && typeof playPromise.catch === "function") {
@@ -233,6 +297,7 @@ deleteBtn.addEventListener("click", async () => {
   try {
     setBusyState(true);
     await deleteVideoFromDB();
+    clearPlaybackPosition();
     player.pause();
     cleanupObjectURL();
     player.removeAttribute("src");
@@ -262,6 +327,7 @@ fileInput.addEventListener("change", async (e) => {
   }
 
   lastSelectedFile = file;
+  clearPlaybackPosition();
 
   try {
     setBusyState(true);
@@ -284,9 +350,14 @@ player.addEventListener("loadedmetadata", () => {
   if (Number.isFinite(duration) && duration > MAX_VIDEO_DURATION_SECONDS) {
     showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
   }
+
+  restorePlaybackPosition();
 });
 
+player.addEventListener("timeupdate", savePlaybackPosition);
+player.addEventListener("pause", savePlaybackPosition);
 player.addEventListener("ended", () => {
+  clearPlaybackPosition();
   if (!player.loop) {
     showAddButton();
   }
@@ -298,13 +369,24 @@ player.addEventListener("error", (e) => {
   showAddButton();
 });
 
-player.addEventListener("click", () => {
-  if (controls.classList.contains("hidden")) {
-    showAddButton();
-  } else {
-    hideAddButton();
+player.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+player.addEventListener("dblclick", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    savePlaybackPosition();
   }
 });
+
+window.addEventListener("pagehide", savePlaybackPosition);
+window.addEventListener("beforeunload", savePlaybackPosition);
 
 (async () => {
   try {
