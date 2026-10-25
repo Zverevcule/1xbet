@@ -2,9 +2,9 @@ const DB_NAME = "videoAppDB";
 const STORE_NAME = "videos";
 const VIDEO_KEY = "currentVideo";
 const METADATA_KEY = "videoMetadata";
-const MAX_VIDEO_SIZE = 25 * 1024 * 1024; // 25 MB
-const MAX_VIDEO_DURATION_SECONDS = 90;
-const LARGE_VIDEO_THRESHOLD = 10 * 1024 * 1024;
+const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB
+const MAX_VIDEO_DURATION_SECONDS = 60 * 60 * 4; // 4 ساعات
+const LARGE_VIDEO_THRESHOLD = 100 * 1024 * 1024; // 100 MB
 
 const player = document.getElementById("player");
 const controls = document.getElementById("controls");
@@ -16,7 +16,8 @@ let isLoadingVideo = false;
 let currentBlobUrl = null;
 let lastSelectedFile = null;
 
-player.preload = "metadata";
+player.preload = "auto";
+player.controls = true;
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 MB";
@@ -26,7 +27,7 @@ function formatFileSize(bytes) {
 function isValidVideoFile(file) {
   if (!file) return false;
   const validMime = file.type.startsWith("video/");
-  const validExtension = /\.(mp4|webm|mov|m4v|mkv|ogg|3gp)$/i.test(file.name || "");
+  const validExtension = /\.(mp4|webm|mov|m4v|mkv|ogg|3gp|avi|flv|wmv)$/i.test(file.name || "");
   return validMime || validExtension;
 }
 
@@ -76,7 +77,7 @@ async function saveVideo(blob) {
     throw new Error("نوع الملف غير مدعوم أو الملف غير صالح.");
   }
   if (isVideoTooLarge(blob)) {
-    throw new Error(`الفيديو كبير جدًا. الحد الأقصى المسموح به هو ${Math.round(MAX_VIDEO_SIZE / (1024 * 1024))} MB.`);
+    throw new Error(`الفيديو كبير جدًا. الحد الأقصى المسموح به هو ${Math.round(MAX_VIDEO_SIZE / (1024 * 1024 * 1024))} GB.`);
   }
 
   isLoadingVideo = true;
@@ -187,7 +188,8 @@ function playBlob(blob) {
     player.src = url;
     player.classList.add("active");
     player.loop = false;
-    player.preload = "metadata";
+    player.preload = "auto";
+    player.controls = true;
 
     const playPromise = player.play();
     if (playPromise && typeof playPromise.catch === "function") {
@@ -240,7 +242,7 @@ deleteBtn.addEventListener("click", async () => {
     showAddButton();
     showStatus("تم حذف الفيديو");
   } catch (err) {
-    console.error("خطأ في حذف الفيديو:", err);
+    console.error("فشل حذف الفيديو:", err);
     showStatus("فشل حذف الفيديو", true);
   } finally {
     setBusyState(false);
@@ -278,20 +280,9 @@ fileInput.addEventListener("change", async (e) => {
 });
 
 player.addEventListener("loadedmetadata", () => {
-  if (player.duration && Number.isFinite(player.duration) && player.duration > MAX_VIDEO_DURATION_SECONDS) {
-    console.warn("الفيديو أطول من الحد المسموح به، سيتم إنذاره.");
-    showStatus(`الفيديو طويل (${Math.round(player.duration)}s)`, true);
-  }
-});
-
-player.addEventListener("timeupdate", () => {
-  if (!player.duration || !Number.isFinite(player.duration)) return;
-  if (player.duration > MAX_VIDEO_DURATION_SECONDS) {
-    if (player.currentTime >= MAX_VIDEO_DURATION_SECONDS) {
-      player.pause();
-      player.currentTime = 0;
-      showStatus(`تم إيقاف الفيديو بعد ${MAX_VIDEO_DURATION_SECONDS} ثانية`, true);
-    }
+  const duration = Number(player.duration);
+  if (Number.isFinite(duration) && duration > MAX_VIDEO_DURATION_SECONDS) {
+    showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
   }
 });
 
