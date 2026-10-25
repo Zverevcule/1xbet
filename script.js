@@ -13,14 +13,17 @@ const controls = document.getElementById("controls");
 const addBtn = document.getElementById("addBtn");
 const deleteBtn = document.getElementById("deleteBtn");
 const fileInput = document.getElementById("fileInput");
+
 let hideTimer = null;
 let isLoadingVideo = false;
 let currentBlobUrl = null;
 let lastSelectedFile = null;
 let lastSavedPlaybackTime = -1;
 let lastTapTime = 0;
+let lastSaveTimestamp = 0;
+let isSeekingResume = false;
 
-player.preload = "auto";
+player.preload = "metadata";
 player.controls = false;
 player.playsInline = true;
 player.muted = false;
@@ -39,13 +42,16 @@ function getSavedPlaybackPosition() {
   }
 }
 
-function savePlaybackPosition() {
+function savePlaybackPosition(force = false) {
   if (!player || !player.src) return;
 
   const time = Number(player.currentTime);
   if (!Number.isFinite(time) || time <= 0) return;
-  if (Math.abs(time - lastSavedPlaybackTime) < 1) return;
 
+  const now = Date.now();
+  if (!force && now - lastSaveTimestamp < 800) return;
+
+  lastSaveTimestamp = now;
   lastSavedPlaybackTime = time;
 
   try {
@@ -62,21 +68,28 @@ function clearPlaybackPosition() {
     console.warn("تعذر حذف موضع التشغيل:", err);
   }
   lastSavedPlaybackTime = -1;
+  lastSaveTimestamp = 0;
 }
 
 function restorePlaybackPosition() {
+  if (!player) return;
   const savedTime = getSavedPlaybackPosition();
   if (!savedTime || !Number.isFinite(player.duration) || player.duration <= 0) return;
 
-  const safeTime = Math.min(savedTime, Math.max(player.duration - 0.5, 0));
+  const safeTime = Math.min(savedTime, Math.max(player.duration - 0.25, 0));
   if (safeTime > 0 && Math.abs(player.currentTime - safeTime) > 0.5) {
+    isSeekingResume = true;
     player.currentTime = safeTime;
     lastSavedPlaybackTime = safeTime;
+    setTimeout(() => {
+      isSeekingResume = false;
+    }, 250);
   }
 }
 
-function resumePlaybackIfVisible() {
-  if (!player || !player.src || document.hidden) return;
+function resumePlaybackIfAllowed() {
+  if (!player || !player.src || document.hidden || isSeekingResume) return;
+
   const savedTime = getSavedPlaybackPosition();
   if (!savedTime || savedTime <= 0) return;
 
@@ -125,7 +138,7 @@ function showAddButton() {
   controls.classList.remove("hidden");
   clearTimeout(hideTimer);
   if (player.classList.contains("active")) {
-    hideTimer = setTimeout(hideAddButton, 4000);
+    hideTimer = setTimeout(hideAddButton, 3500);
   }
 }
 
@@ -268,34 +281,28 @@ function playBlob(blob) {
   try {
     cleanupObjectURL();
     player.pause();
+    player.removeAttribute("src");
+    player.load();
 
     const url = URL.createObjectURL(blob);
     currentBlobUrl = url;
     player.src = url;
     player.classList.add("active");
     player.loop = false;
-    player.preload = "auto";
+    player.preload = "metadata";
     player.controls = false;
     player.muted = false;
 
-    const resumeOnReady = () => {
-      if (getSavedPlaybackPosition() > 0) {
-        restorePlaybackPosition();
-      }
-      if (player.paused && !document.hidden) {
+    const handleReady = () => {
+      restorePlaybackPosition();
+      if (!document.hidden && player.paused) {
         player.play().catch(() => {});
       }
     };
 
-    player.addEventListener("loadedmetadata", resumeOnReady, { once: true });
-    player.addEventListener("canplay", resumeOnReady, { once: true });
-
-    const playPromise = player.play();
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch((err) => {
-        console.warn("لا يمكن التشغيل التلقائي:", err);
-      });
-    }
+    player.addEventListener("loadedmetadata", handleReady, { once: true });
+    player.addEventListener("loadeddata", handleReady, { once: true });
+    player.addEventListener("canplay", handleReady, { once: true });
 
     hideAddButton();
   } catch (err) {
@@ -383,8 +390,8 @@ player.addEventListener("canplay", () => {
   }
 });
 
-player.addEventListener("timeupdate", savePlaybackPosition);
-player.addEventListener("pause", savePlaybackPosition);
+player.addEventListener("timeupdate", () => savePlaybackPosition(false));
+player.addEventListener("pause", () => savePlaybackPosition(true));
 player.addEventListener("ended", () => {
   clearPlaybackPosition();
   if (!player.loop) {
@@ -412,16 +419,14 @@ screen.addEventListener("touchstart", (event) => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    savePlaybackPosition();
+    savePlaybackPosition(true);
     return;
   }
 
   if (document.visibilityState === "visible") {
     setTimeout(() => {
       if (!player || !player.src) return;
-      if (getSavedPlaybackPosition() > 0) {
-        restorePlaybackPosition();
-      }
+      restorePlaybackPosition();
       if (player.paused) {
         player.play().catch(() => {});
       }
@@ -429,8 +434,17 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.addEventListener("pagehide", savePlaybackPosition);
-window.addEventListener("beforeunload", savePlaybackPosition);
+window.addEventListener("pagehide", () => savePlaybackPosition(true));
+window.addEventListener("beforeunload", () => savePlaybackPosition(true));
+window.addEventListener("focus", () => {
+  setTimeout(() => {
+    if (!player || !player.src || document.hidden) return;
+    restorePlaybackPosition();
+    if (player.paused) {
+      player.play().catch(() => {});
+    }
+  }, 250);
+});
 
 (async () => {
   try {
