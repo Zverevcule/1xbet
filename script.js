@@ -22,6 +22,8 @@ let lastTapTime = 0;
 
 player.preload = "auto";
 player.controls = false;
+player.playsInline = true;
+player.muted = false;
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 MB";
@@ -47,7 +49,7 @@ function savePlaybackPosition() {
   lastSavedPlaybackTime = time;
 
   try {
-    localStorage.setItem(VIDEO_POSITION_KEY, String(time));
+    localStorage.setItem(VIDEO_POSITION_KEY, String(time.toFixed(2)));
   } catch (err) {
     console.warn("تعذر حفظ موضع التشغيل:", err);
   }
@@ -66,8 +68,8 @@ function restorePlaybackPosition() {
   const savedTime = getSavedPlaybackPosition();
   if (!savedTime || !Number.isFinite(player.duration) || player.duration <= 0) return;
 
-  const safeTime = Math.min(savedTime, player.duration - 0.5);
-  if (safeTime > 0) {
+  const safeTime = Math.min(savedTime, Math.max(player.duration - 0.5, 0));
+  if (safeTime > 0 && Math.abs(player.currentTime - safeTime) > 0.5) {
     player.currentTime = safeTime;
   }
 }
@@ -248,6 +250,16 @@ function evaluateVideoFile(file) {
   return { valid: true, reason: "تم تجهيز الفيديو بنجاح.", large: false };
 }
 
+function applyResumeTime() {
+  const savedTime = getSavedPlaybackPosition();
+  if (!savedTime || !Number.isFinite(player.duration) || player.duration <= 0) return;
+
+  const safeTime = Math.min(savedTime, Math.max(player.duration - 0.5, 0));
+  if (safeTime > 0 && Math.abs(player.currentTime - safeTime) > 0.5) {
+    player.currentTime = safeTime;
+  }
+}
+
 function playBlob(blob) {
   try {
     cleanupObjectURL();
@@ -260,24 +272,17 @@ function playBlob(blob) {
     player.loop = false;
     player.preload = "auto";
     player.controls = false;
+    player.muted = false;
 
-    const savedTime = getSavedPlaybackPosition();
-    if (savedTime > 0) {
-      player.dataset.resumeAt = String(savedTime);
-    }
-
-    const onMetadataReady = () => {
-      const resumeAt = Number.parseFloat(player.dataset.resumeAt || "0");
-      if (resumeAt > 0 && Number.isFinite(player.duration) && player.duration > 0) {
-        const safeTime = Math.min(resumeAt, player.duration - 0.5);
-        if (safeTime > 0) {
-          player.currentTime = safeTime;
-        }
+    const resumeOnReady = () => {
+      applyResumeTime();
+      if (player.paused) {
+        player.play().catch(() => {});
       }
-      delete player.dataset.resumeAt;
     };
 
-    player.addEventListener("loadedmetadata", onMetadataReady, { once: true });
+    player.addEventListener("loadedmetadata", resumeOnReady, { once: true });
+    player.addEventListener("canplay", resumeOnReady, { once: true });
 
     const playPromise = player.play();
     if (playPromise && typeof playPromise.catch === "function") {
@@ -363,7 +368,11 @@ player.addEventListener("loadedmetadata", () => {
     showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
   }
 
-  restorePlaybackPosition();
+  applyResumeTime();
+});
+
+player.addEventListener("canplay", () => {
+  applyResumeTime();
 });
 
 player.addEventListener("timeupdate", savePlaybackPosition);
