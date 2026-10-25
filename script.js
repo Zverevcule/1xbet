@@ -23,10 +23,12 @@ let lastTapTime = 0;
 let lastSaveTimestamp = 0;
 let isSeekingResume = false;
 
-player.preload = "metadata";
-player.controls = false;
-player.playsInline = true;
-player.muted = false;
+if (player) {
+  player.preload = "metadata";
+  player.controls = false;
+  player.playsInline = true;
+  player.muted = false;
+}
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 MB";
@@ -135,14 +137,16 @@ function showStatus(message, isError = false) {
 }
 
 function showAddButton() {
+  if (!controls) return;
   controls.classList.remove("hidden");
   clearTimeout(hideTimer);
-  if (player.classList.contains("active")) {
+  if (player && player.classList.contains("active")) {
     hideTimer = setTimeout(hideAddButton, 3500);
   }
 }
 
 function hideAddButton() {
+  if (!controls) return;
   controls.classList.add("hidden");
 }
 
@@ -278,22 +282,26 @@ function evaluateVideoFile(file) {
 }
 
 function playBlob(blob) {
+  if (!player || !blob) return;
+
   try {
     cleanupObjectURL();
     player.pause();
     player.removeAttribute("src");
     player.load();
+    player.classList.remove("active");
 
     const url = URL.createObjectURL(blob);
     currentBlobUrl = url;
     player.src = url;
     player.classList.add("active");
-    player.loop = false;
     player.preload = "metadata";
     player.controls = false;
     player.muted = false;
+    player.style.opacity = "0";
 
     const handleReady = () => {
+      player.style.opacity = "1";
       restorePlaybackPosition();
       if (!document.hidden && player.paused) {
         player.play().catch(() => {});
@@ -312,110 +320,131 @@ function playBlob(blob) {
 }
 
 function setBusyState(isBusy) {
+  if (!addBtn || !deleteBtn) return;
   addBtn.style.opacity = isBusy ? "0.5" : "1";
   addBtn.disabled = isBusy;
   deleteBtn.disabled = isBusy;
 }
 
-addBtn.addEventListener("click", () => {
-  if (!isLoadingVideo) {
-    fileInput.click();
-  }
-});
+if (addBtn) {
+  addBtn.addEventListener("click", () => {
+    if (!isLoadingVideo) {
+      fileInput.click();
+    }
+  });
+}
 
-deleteBtn.addEventListener("click", async () => {
-  try {
-    setBusyState(true);
-    await deleteVideoFromDB();
+if (deleteBtn) {
+  deleteBtn.addEventListener("click", async () => {
+    try {
+      setBusyState(true);
+      await deleteVideoFromDB();
+      clearPlaybackPosition();
+      if (player) {
+        player.pause();
+        cleanupObjectURL();
+        player.removeAttribute("src");
+        player.load();
+        player.classList.remove("active");
+      }
+      clearTimeout(hideTimer);
+      showAddButton();
+      showStatus("تم حذف الفيديو");
+    } catch (err) {
+      console.error("فشل حذف الفيديو:", err);
+      showStatus("فشل حذف الفيديو", true);
+    } finally {
+      setBusyState(false);
+    }
+  });
+}
+
+if (fileInput) {
+  fileInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const evaluation = evaluateVideoFile(file);
+    if (!evaluation.valid) {
+      console.warn(evaluation.reason);
+      showStatus(evaluation.reason, true);
+      fileInput.value = "";
+      return;
+    }
+
+    lastSelectedFile = file;
     clearPlaybackPosition();
-    player.pause();
-    cleanupObjectURL();
-    player.removeAttribute("src");
-    player.load();
-    player.classList.remove("active");
-    clearTimeout(hideTimer);
+
+    try {
+      setBusyState(true);
+      showStatus(evaluation.large ? "جارٍ تجهيز الفيديو الكبير..." : "جارٍ حفظ الفيديو...");
+
+      await saveVideo(file);
+      playBlob(file);
+      showStatus(evaluation.large ? "تم تجهيز الفيديو الكبير بنجاح" : "تم حفظ الفيديو بنجاح");
+    } catch (err) {
+      console.error("خطأ في حفظ الفيديو:", err);
+      showStatus(err.message || "فشل حفظ الفيديو", true);
+    } finally {
+      setBusyState(false);
+      fileInput.value = "";
+    }
+  });
+}
+
+if (player) {
+  player.addEventListener("loadedmetadata", () => {
+    const duration = Number(player.duration);
+    if (Number.isFinite(duration) && duration > MAX_VIDEO_DURATION_SECONDS) {
+      showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
+    }
+    restorePlaybackPosition();
+  });
+
+  player.addEventListener("canplay", () => {
+    restorePlaybackPosition();
+    if (!document.hidden && player.paused) {
+      player.play().catch(() => {});
+    }
+  });
+
+  player.addEventListener("timeupdate", () => savePlaybackPosition(false));
+  player.addEventListener("pause", () => savePlaybackPosition(true));
+  player.addEventListener("ended", () => {
+    clearPlaybackPosition();
+    if (!player.loop) {
+      showAddButton();
+    }
+  });
+
+  player.addEventListener("error", (e) => {
+    console.error("خطأ في الفيديو:", e);
+    showStatus("فشل تشغيل الفيديو", true);
     showAddButton();
-    showStatus("تم حذف الفيديو");
-  } catch (err) {
-    console.error("فشل حذف الفيديو:", err);
-    showStatus("فشل حذف الفيديو", true);
-  } finally {
-    setBusyState(false);
-  }
-});
+  });
 
-fileInput.addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+  player.addEventListener("click", () => {
+    if (controls && controls.classList.contains("hidden")) {
+      showAddButton();
+    } else if (controls) {
+      hideAddButton();
+    }
+  });
+}
 
-  const evaluation = evaluateVideoFile(file);
-  if (!evaluation.valid) {
-    console.warn(evaluation.reason);
-    showStatus(evaluation.reason, true);
-    fileInput.value = "";
-    return;
-  }
-
-  lastSelectedFile = file;
-  clearPlaybackPosition();
-
-  try {
-    setBusyState(true);
-    showStatus(evaluation.large ? "جارٍ تجهيز الفيديو الكبير..." : "جارٍ حفظ الفيديو...");
-
-    await saveVideo(file);
-    playBlob(file);
-    showStatus(evaluation.large ? "تم تجهيز الفيديو الكبير بنجاح" : "تم حفظ الفيديو بنجاح");
-  } catch (err) {
-    console.error("خطأ في حفظ الفيديو:", err);
-    showStatus(err.message || "فشل حفظ الفيديو", true);
-  } finally {
-    setBusyState(false);
-    fileInput.value = "";
-  }
-});
-
-player.addEventListener("loadedmetadata", () => {
-  const duration = Number(player.duration);
-  if (Number.isFinite(duration) && duration > MAX_VIDEO_DURATION_SECONDS) {
-    showStatus(`مدة الفيديو طويلة (${Math.round(duration / 60)} دقيقة)`, false);
-  }
-  restorePlaybackPosition();
-});
-
-player.addEventListener("canplay", () => {
-  restorePlaybackPosition();
-  if (!document.hidden && player.paused) {
-    player.play().catch(() => {});
-  }
-});
-
-player.addEventListener("timeupdate", () => savePlaybackPosition(false));
-player.addEventListener("pause", () => savePlaybackPosition(true));
-player.addEventListener("ended", () => {
-  clearPlaybackPosition();
-  if (!player.loop) {
+if (screen) {
+  screen.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     showAddButton();
-  }
-});
+  });
 
-player.addEventListener("error", (e) => {
-  console.error("خطأ في الفيديو:", e);
-  showStatus("فشل تشغيل الفيديو", true);
-  showAddButton();
-});
-
-screen.addEventListener("dblclick", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  showAddButton();
-});
-
-screen.addEventListener("touchstart", (event) => {
-  if (event.touches && event.touches.length > 0) {
-    handleDoubleTapShowControls();
-  }
-}, { passive: true });
+  screen.addEventListener("touchstart", (event) => {
+    if (event.touches && event.touches.length > 0) {
+      handleDoubleTapShowControls();
+    }
+  }, { passive: true });
+}
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
@@ -451,12 +480,12 @@ window.addEventListener("focus", () => {
     const existing = await loadVideo();
     if (existing && existing.size > 0) {
       playBlob(existing);
-    } else {
+    } else if (controls) {
       showAddButton();
     }
   } catch (err) {
     console.error("خطأ في التهيئة:", err);
-    showAddButton();
+    if (controls) showAddButton();
   }
 })();
 
